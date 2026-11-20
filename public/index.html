@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>分片下载控制台</title>
+  <meta name="description" content="可恢复的大文件分片下载器：校验、重试、版本替换与整体哈希验证" />
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M9 11h14M9 16h14M9 21h9' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M4 7h16M4 12h16M4 17h10"/>
+        </svg>
+      </span>
+      <div>
+        <h1>分片下载控制台</h1>
+        <p class="brand-sub">断点续传 · 校验复用 · 版本感知</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span class="conn" id="conn-status" data-state="online">
+        <span class="conn-dot" aria-hidden="true"></span>
+        <span id="conn-label">服务端在线</span>
+      </span>
+      <button class="icon-btn" id="theme-toggle" type="button" aria-label="切换深浅主题" title="切换深浅主题">
+        <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="layout">
+    <!-- ---------------------------------------------------------- main column -->
+    <section class="col-main">
+      <div class="file-tabs" role="tablist" aria-label="选择文件">
+        <div id="file-tabs" class="file-tabs-inner"></div>
+        <button id="start-all" class="btn btn-quiet btn-sm" type="button" title="并发下载所有未完成任务">全部开始</button>
+      </div>
+
+      <article class="card download-card" aria-labelledby="dl-title">
+        <header class="card-head">
+          <div class="file-ident">
+            <h2 id="dl-title">—</h2>
+            <p class="file-note" id="dl-note"></p>
+          </div>
+          <span class="rev-badge" id="rev-badge" title="当前服务端修订">r—</span>
+        </header>
+
+        <div class="hero-row">
+          <div class="hero">
+            <div class="hero-value"><span id="hero-percent">0</span><span class="hero-unit">%</span></div>
+            <div class="hero-sub" id="hero-sub">等待开始</div>
+          </div>
+          <div class="hero-meta">
+            <div class="hero-meta-row"><span>已下载</span><strong id="meta-bytes">0 B</strong></div>
+            <div class="hero-meta-row"><span>文件大小</span><strong id="meta-size">—</strong></div>
+            <div class="hero-meta-row"><span>分片</span><strong id="meta-chunks">0 / 0</strong></div>
+            <div class="hero-meta-row"><span>并发</span><strong id="meta-concurrency">4</strong></div>
+          </div>
+        </div>
+
+        <div class="meter-block">
+          <div class="meter" id="progress-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="下载进度">
+            <div class="meter-fill" id="meter-fill" style="width:0%"></div>
+            <div class="meter-ticks" id="meter-ticks" aria-hidden="true"></div>
+          </div>
+          <div class="meter-legend">
+            <span id="meter-caption">0 B / —</span>
+            <span id="meter-speed">—</span>
+          </div>
+        </div>
+
+        <div class="controls">
+          <div class="control-primary">
+            <button id="btn-start" class="btn btn-primary" type="button">开始下载</button>
+            <button id="btn-pause" class="btn" type="button">暂停</button>
+            <button id="btn-cancel" class="btn" type="button">取消</button>
+            <button id="btn-reset" class="btn btn-quiet" type="button">清除本地分片</button>
+          </div>
+          <label class="concurrency" for="concurrency">
+            <span>并发数 <output id="concurrency-out">4</output></span>
+            <input id="concurrency" type="range" min="1" max="8" step="1" value="4" />
+          </label>
+        </div>
+
+        <div id="status-line" class="status-line" role="status" aria-live="polite">
+          <span class="status-chip" data-state="idle" id="status-chip">空闲</span>
+          <span id="status-detail">尚未开始</span>
+        </div>
+
+        <div id="resume-banner" class="resume-banner" hidden>
+          <div class="resume-copy">
+            <strong>发现可恢复的下载</strong>
+            <span id="resume-detail">已完成 0 个分片</span>
+          </div>
+          <div class="resume-actions">
+            <button id="btn-resume" class="btn btn-primary btn-sm" type="button">继续下载</button>
+            <button id="btn-discard" class="btn btn-quiet btn-sm" type="button">丢弃</button>
+          </div>
+        </div>
+
+        <div id="completed-panel" class="completed-panel" hidden>
+          <div class="verified-line">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg>
+            <span>整体 SHA-256 校验通过</span>
+          </div>
+          <code id="merged-hash"></code>
+          <div class="completed-actions">
+            <a id="download-link" class="btn btn-primary btn-sm" download>保存文件</a>
+            <span id="completed-at" class="muted"></span>
+          </div>
+        </div>
+
+        <div id="failure-panel" class="failure-panel" hidden>
+          <div class="failure-title">
+            <span class="status-chip" data-state="failed" id="failure-chip">失败</span>
+            <strong id="failure-title">下载失败</strong>
+          </div>
+          <p id="failure-message"></p>
+          <div id="failure-detail" class="failure-detail"></div>
+        </div>
+      </article>
+
+      <article class="card" aria-labelledby="grid-title">
+        <header class="card-head">
+          <div>
+            <h2 id="grid-title">分片进度</h2>
+            <p class="card-sub" id="grid-sub">每个方块是一个分片，悬停或聚焦查看校验和与重试原因</p>
+          </div>
+          <div class="segmented" role="group" aria-label="分片视图">
+            <button class="seg-btn is-active" data-view="grid" type="button" aria-pressed="true">网格</button>
+            <button class="seg-btn" data-view="table" type="button" aria-pressed="false">表格</button>
+          </div>
+        </header>
+
+        <div class="chunk-legend" aria-label="图例">
+          <span class="legend-item"><i class="swatch" data-s="done"></i>已完成</span>
+          <span class="legend-item"><i class="swatch" data-s="active"></i>下载中</span>
+          <span class="legend-item"><i class="swatch" data-s="retry"></i>重试中</span>
+          <span class="legend-item"><i class="swatch" data-s="failed"></i>失败</span>
+          <span class="legend-item"><i class="swatch" data-s="pending"></i>待下载</span>
+        </div>
+
+        <div id="chunk-grid" class="chunk-grid" role="list" aria-label="分片下载状态"></div>
+
+        <div id="chunk-table-wrap" class="table-wrap" hidden>
+          <table class="data-table" id="chunk-table">
+            <caption class="visually-hidden">分片状态明细</caption>
+            <thead>
+              <tr><th scope="col">#</th><th scope="col">偏移</th><th scope="col">长度</th><th scope="col">状态</th><th scope="col">尝试</th><th scope="col">SHA-256</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div id="chunk-tooltip" class="chunk-tooltip" role="tooltip" hidden></div>
+      </article>
+
+      <article class="card" id="version-card" aria-labelledby="version-title">
+        <header class="card-head">
+          <div>
+            <h2 id="version-title">版本差异</h2>
+            <p class="card-sub" id="version-sub">服务端替换文件后，旧分片按校验和判定能否复用</p>
+          </div>
+          <span class="rev-badge" id="version-badge" hidden>r— → r—</span>
+        </header>
+
+        <div id="version-empty" class="empty-state">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h7l2 2h7v10H4z"/><path d="M9 13h6"/></svg>
+          <p>尚未发生版本替换。点击右侧「替换文件」模拟服务端发布新修订。</p>
+        </div>
+
+        <div id="version-content" hidden>
+          <div class="version-summary" id="version-summary"></div>
+          <div class="chunk-legend" id="version-legend">
+            <span class="legend-item"><i class="swatch" data-v="same"></i>校验和一致 · 复用</span>
+            <span class="legend-item"><i class="swatch" data-v="changed"></i>内容变化 · 作废</span>
+            <span class="legend-item"><i class="swatch" data-v="added"></i>新增分片</span>
+            <span class="legend-item"><i class="swatch" data-v="removed"></i>移除分片</span>
+          </div>
+          <div id="version-strip" class="version-strip" aria-label="版本分片差异"></div>
+          <div class="version-history">
+            <h3>替换历史</h3>
+            <ol id="version-history-list"></ol>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" aria-labelledby="retry-title">
+        <header class="card-head">
+          <div>
+            <h2 id="retry-title">重试日志</h2>
+            <p class="card-sub">每次失败的分片、原因与退避延迟</p>
+          </div>
+          <span class="count-pill" id="retry-count">0 次</span>
+        </header>
+        <div class="retry-summary" id="retry-summary" hidden>
+          <h3>重试原因分布</h3>
+          <div id="retry-bars" class="retry-bars"></div>
+        </div>
+        <div id="retry-empty" class="empty-state">
+          <p>暂无重试记录。</p>
+        </div>
+        <div class="table-wrap" id="retry-table-wrap" hidden>
+          <p class="retry-table-hint visually-hidden">表格可横向滚动查看全部列</p>
+          <table class="data-table" id="retry-table">
+            <caption class="visually-hidden">重试明细</caption>
+            <thead>
+              <tr><th scope="col">时间</th><th scope="col">分片</th><th scope="col">尝试</th><th scope="col">原因</th><th scope="col">详情</th><th scope="col">退避</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <!-- --------------------------------------------------------- side column -->
+    <aside class="col-side">
+      <article class="card kpi-card" aria-labelledby="kpi-title">
+        <h2 id="kpi-title" class="visually-hidden">关键指标</h2>
+        <div class="kpi-grid">
+          <div class="stat-tile">
+            <span class="stat-label">可复用分片</span>
+            <span class="stat-value" id="kpi-reused">0</span>
+            <span class="stat-foot" id="kpi-reused-foot">恢复时按校验和复用</span>
+          </div>
+          <div class="stat-tile">
+            <span class="stat-label">重试次数</span>
+            <span class="stat-value" id="kpi-retries">0</span>
+            <span class="stat-foot" id="kpi-retries-foot">含成功重试</span>
+          </div>
+          <div class="stat-tile">
+            <span class="stat-label">下载速率</span>
+            <span class="stat-value" id="kpi-speed">—</span>
+            <span class="stat-foot" id="kpi-eta">预计剩余 —</span>
+          </div>
+          <div class="stat-tile">
+            <span class="stat-label">校验覆盖</span>
+            <span class="stat-value" id="kpi-verified">0</span>
+            <span class="stat-foot">逐片 SHA-256 + 整体</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" aria-labelledby="fault-title">
+        <header class="card-head">
+          <div>
+            <h2 id="fault-title">故障注入</h2>
+            <p class="card-sub">改动立即对新的分片请求生效</p>
+          </div>
+          <span class="count-pill" id="fault-active">默认</span>
+        </header>
+
+        <div class="fault-list">
+          <label class="switch-row" for="fault-offline">
+            <span>
+              <strong>模拟断网</strong>
+              <small>所有分片请求返回 503</small>
+            </span>
+            <input type="checkbox" id="fault-offline" class="switch" role="switch" />
+          </label>
+          <label class="slider-row" for="fault-drop">
+            <span><strong>连接中断</strong><output id="fault-drop-out">6%</output></span>
+            <input type="range" id="fault-drop" min="0" max="60" step="1" value="6" />
+          </label>
+          <label class="slider-row" for="fault-corrupt">
+            <span><strong>分片损坏</strong><output id="fault-corrupt-out">5%</output></span>
+            <input type="range" id="fault-corrupt" min="0" max="60" step="1" value="5" />
+          </label>
+          <label class="slider-row" for="fault-range">
+            <span><strong>范围错位</strong><output id="fault-range-out">5%</output></span>
+            <input type="range" id="fault-range" min="0" max="60" step="1" value="5" />
+          </label>
+          <label class="slider-row" for="fault-latency">
+            <span><strong>基础延迟</strong><output id="fault-latency-out">60 ms</output></span>
+            <input type="range" id="fault-latency" min="0" max="600" step="10" value="60" />
+          </label>
+        </div>
+
+        <div class="fault-actions">
+          <button id="btn-replace" class="btn btn-warn" type="button">替换文件（发布新修订）</button>
+          <button id="btn-reset-rev" class="btn btn-quiet btn-sm" type="button">重置为 r1</button>
+        </div>
+        <p class="hint">替换后当前下载会收到 409，已完成且校验和仍匹配的分片会被复用，其余作废重下。</p>
+      </article>
+
+      <article class="card" aria-labelledby="events-title">
+        <header class="card-head">
+          <div>
+            <h2 id="events-title">事件时间线</h2>
+            <p class="card-sub">下载器与本地存储的关键事件</p>
+          </div>
+        </header>
+        <ol class="timeline" id="timeline" aria-live="polite"></ol>
+      </article>
+
+      <article class="card" aria-labelledby="files-title">
+        <header class="card-head">
+          <div>
+            <h2 id="files-title">其他文件</h2>
+            <p class="card-sub">可同时进行，互不阻塞</p>
+          </div>
+        </header>
+        <ul class="file-list" id="file-list"></ul>
+      </article>
+    </aside>
+  </main>
+
+  <div id="toast-region" class="toast-region" aria-live="assertive" aria-atomic="false"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

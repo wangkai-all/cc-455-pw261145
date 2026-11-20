@@ -1,0 +1,18 @@
+{
+  "name": "resumable-downloader",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Resumable chunked downloader with integrity verification, fault injection and a live dashboard",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test test/unit.test.js test/api.test.js",
+    "test:e2e": "node test/e2e.test.js",
+    "test:all": "npm test && npm run test:e2e"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "playwright": "^1.56.0"
+  }
+}
